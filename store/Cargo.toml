@@ -1,14 +1,12 @@
 [package]
-name = "azvm_manager"
+name = "store"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-azure_compute = { path = "../azure_compute" }
-display = { path = "../display" }
-store = { path = "../store" }
+azure_core = "0.16.0"
+serde = "1.0.189"
+serde_json = "1.0.107"
 tokio = { version = "1", features = ["full"] }
-tokio-util = "0.7.9"
-clap = { version = "4.4.6", features = ["derive"] }

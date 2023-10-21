@@ -3,5 +3,7 @@ resolver = "2"
 
 members = [
     "azvm_manager",
-    "azure_compute"
+    "azure_compute",
+    "display",
+    "store"
 ]
