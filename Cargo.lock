@@ -1578,6 +1578,7 @@ dependencies = [
  "azure_core",
  "serde",
  "serde_json",
+ "time",
  "tokio",
 ]
 
