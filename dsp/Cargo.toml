@@ -1,0 +1,12 @@
+[package]
+name = "dsp"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tabled = { version = "0.14.0", features = ["color"] }
+azure_mgmt_compute = "0.16.0"
+azure_mgmt_resources = "0.16.0"
+azure_mgmt_subscription = "0.16.0"

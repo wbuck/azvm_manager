@@ -1,10 +1,6 @@
-use azure_core::auth::{TokenCredential, TokenResponse};
-use serde::ser::{SerializeStruct, Serializer};
 use serde::{Deserialize, Serialize};
-use time::OffsetDateTime;
-use azure_core::auth::AccessToken;
 use tokio::fs;
-use std::sync::Arc;
+
 
 const STORE_FILE: &'static str = "store.json";
 
@@ -13,8 +9,6 @@ pub struct Store{
     resource_group: Option<String>,
     subscription_id: Option<String>
 }
-
-
 
 impl Store {
     pub async fn get_or_create() -> Result<Self, Box<dyn std::error::Error>> {

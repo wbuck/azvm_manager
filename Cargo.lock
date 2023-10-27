@@ -42,6 +42,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "ansi-str"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1cf4578926a981ab0ca955dc023541d19de37112bc24c1a197bd806d3d86ad1d"
+dependencies = [
+ "ansitok",
+]
+
+[[package]]
+name = "ansitok"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "220044e6a1bb31ddee4e3db724d29767f352de47445a6cd75e1a173142136c83"
+dependencies = [
+ "nom",
+ "vte",
+]
+
+[[package]]
 name = "anstream"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -96,6 +115,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a4668cab20f66d8d020e1fbc0ebe47217433c1b6c8f2040faf858554e394ace6"
 
 [[package]]
+name = "arrayvec"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23b62fc65de8e4e7f52534fb52b0f3ed04746ae267519eef2a83941e8085068b"
+
+[[package]]
 name = "async-channel"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -131,21 +156,6 @@ name = "autocfg"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d468802bab17cbc0cc575e9b053f41e72aa36bfa6b7f55e3529ffa43161b97fa"
-
-[[package]]
-name = "azure_compute"
-version = "0.1.0"
-dependencies = [
- "azure_core",
- "azure_identity",
- "bytes",
- "env_logger",
- "futures",
- "log",
- "serde",
- "serde_json",
- "time",
-]
 
 [[package]]
 name = "azure_core"
@@ -195,12 +205,65 @@ dependencies = [
 ]
 
 [[package]]
+name = "azure_mgmt_compute"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eed15dd2b2f2de2c26348550489dc6536cc00a9c712f94716505a81a7f64eb5c"
+dependencies = [
+ "azure_core",
+ "bytes",
+ "futures",
+ "log",
+ "serde",
+ "serde_json",
+ "time",
+]
+
+[[package]]
+name = "azure_mgmt_resources"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c420e1eb76cd7c9d52ce0ead1eea928ef2f78763ebe6de554b2d0963a366fa9b"
+dependencies = [
+ "azure_core",
+ "bytes",
+ "futures",
+ "log",
+ "serde",
+ "serde_json",
+ "time",
+]
+
+[[package]]
+name = "azure_mgmt_subscription"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ae58f27c088445d94028fc70fd7fd83e5775bb6c5c945cf3f3529611b983539"
+dependencies = [
+ "azure_core",
+ "bytes",
+ "futures",
+ "log",
+ "serde",
+ "serde_json",
+ "time",
+]
+
+[[package]]
 name = "azvm_manager"
 version = "0.1.0"
 dependencies = [
- "azure_compute",
+ "azure_core",
+ "azure_identity",
+ "azure_mgmt_compute",
+ "azure_mgmt_resources",
+ "azure_mgmt_subscription",
  "clap",
- "display",
+ "dsp",
+ "env_logger",
+ "futures",
+ "futures-util",
+ "log",
  "store",
  "tokio",
  "tokio-util",
@@ -428,9 +491,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "display"
+name = "dsp"
 version = "0.1.0"
 dependencies = [
+ "azure_mgmt_compute",
+ "azure_mgmt_resources",
+ "azure_mgmt_subscription",
  "tabled",
 ]
 
@@ -938,6 +1004,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
 
 [[package]]
+name = "minimal-lexical"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
+
+[[package]]
 name = "miniz_oxide"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -973,6 +1045,16 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "tempfile",
+]
+
+[[package]]
+name = "nom"
+version = "7.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d273983c5a657a70a3e8f2a01329822f3b8c8172b73826411a55751e404a0a4a"
+dependencies = [
+ "memchr",
+ "minimal-lexical",
 ]
 
 [[package]]
@@ -1087,6 +1169,8 @@ version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2ccbe15f2b6db62f9a9871642746427e297b0ceb85f9a7f1ee5ff47d184d0c8"
 dependencies = [
+ "ansi-str",
+ "ansitok",
  "bytecount",
  "fnv",
  "unicode-width",
@@ -1575,10 +1659,8 @@ dependencies = [
 name = "store"
 version = "0.1.0"
 dependencies = [
- "azure_core",
  "serde",
  "serde_json",
- "time",
  "tokio",
 ]
 
@@ -1637,6 +1719,8 @@ version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dfe9c3632da101aba5131ed63f9eed38665f8b3c68703a6bb18124835c1a5d22"
 dependencies = [
+ "ansi-str",
+ "ansitok",
  "papergrid",
  "tabled_derive",
  "unicode-width",
@@ -1909,6 +1993,27 @@ name = "version_check"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "49874b5167b65d7193b8aba1567f5c7d93d001cafc34600cee003eda787e483f"
+
+[[package]]
+name = "vte"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6cbce692ab4ca2f1f3047fcf732430249c0e971bfdd2b234cf2c47ad93af5983"
+dependencies = [
+ "arrayvec",
+ "utf8parse",
+ "vte_generate_state_changes",
+]
+
+[[package]]
+name = "vte_generate_state_changes"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d257817081c7dffcdbab24b9e62d2def62e2ff7d00b1c20062551e6cccc145ff"
+dependencies = [
+ "proc-macro2",
+ "quote",
+]
 
 [[package]]
 name = "waker-fn"
