@@ -192,7 +192,7 @@ async fn process_rg_cmd(args: &RgArgs, store: &Store, creds: Arc<dyn TokenCreden
                 .get(group_name, sub_id)
                 .await?;
 
-            println!("{:#?}", &group);
+            dsp::display_rg(dsp::Output::Single(&group));
         },
         RgCmd::List { sub_id } => {
             let sub_id = match sub_id.as_deref() {
@@ -209,7 +209,7 @@ async fn process_rg_cmd(args: &RgArgs, store: &Store, creds: Arc<dyn TokenCreden
                 .flat_map(|groups| groups.value)
                 .collect();
 
-            println!("{:#?}", &groups);
+            dsp::display_rg(dsp::Output::Multiple(&groups));
         }
     }
 

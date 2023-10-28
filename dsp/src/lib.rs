@@ -1,8 +1,10 @@
-use tabled::{settings::{style::{RawStyle, Style}, Color}};
+use tabled::settings::{style::{RawStyle, Style}, Color};
 
 pub mod sub;
 pub use sub::*;
 
+pub mod rg;
+pub use rg::*;
 
 pub enum Output<'a, T> {
     Single(&'a T),
