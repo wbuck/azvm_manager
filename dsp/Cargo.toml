@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 tabled = { version = "0.14.0", features = ["color"] }
-azure_mgmt_compute = "0.16.0"
-azure_mgmt_resources = "0.16.0"
-azure_mgmt_subscription = "0.16.0"
+azure_mgmt_compute = "0.17.0"
+azure_mgmt_resources = "0.17.0"
+azure_mgmt_subscription = "0.17.0"
+crossterm = "0.27.0"
