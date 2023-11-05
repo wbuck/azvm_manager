@@ -222,6 +222,51 @@ dependencies = [
 ]
 
 [[package]]
+name = "azure_mgmt_recoveryservices"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6cd5ed5637b0498218e1374670842e8adeba139f4de0702c5ef5bfbe9382902"
+dependencies = [
+ "azure_core",
+ "bytes",
+ "futures",
+ "log",
+ "serde",
+ "serde_json",
+ "time",
+]
+
+[[package]]
+name = "azure_mgmt_recoveryservicesbackup"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d56022ae98ca60aa2b4f8b3580b669286af16b04f38d3f5995daaa6165737719"
+dependencies = [
+ "azure_core",
+ "bytes",
+ "futures",
+ "log",
+ "serde",
+ "serde_json",
+ "time",
+]
+
+[[package]]
+name = "azure_mgmt_recoveryservicessiterecovery"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d21efc0acd46e1d508ed199bb4914818e18aa4bd878b7924dfcf10667c3451ee"
+dependencies = [
+ "azure_core",
+ "bytes",
+ "futures",
+ "log",
+ "serde",
+ "serde_json",
+ "time",
+]
+
+[[package]]
 name = "azure_mgmt_resources"
 version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -258,6 +303,9 @@ dependencies = [
  "azure_core",
  "azure_identity",
  "azure_mgmt_compute",
+ "azure_mgmt_recoveryservices",
+ "azure_mgmt_recoveryservicesbackup",
+ "azure_mgmt_recoveryservicessiterecovery",
  "azure_mgmt_resources",
  "azure_mgmt_subscription",
  "clap",
