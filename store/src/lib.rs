@@ -7,7 +7,9 @@ const STORE_FILE: &'static str = "store.json";
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct Store{
     resource_group: Option<String>,
-    subscription_id: Option<String>
+    subscription_id: Option<String>,
+    vault_resource_group: Option<String>,
+    vault_name: Option<String>
 }
 
 impl Store {
@@ -32,8 +34,24 @@ impl Store {
         self.resource_group = Some(resource_group.to_owned());
     }
 
+    pub fn set_vault_resource_group(&mut self, resource_group: &str) {
+        self.vault_resource_group = Some(resource_group.to_owned());
+    }
+
+    pub fn set_vault_name(&mut self, vault_name: &str) {
+        self.vault_name = Some(vault_name.to_owned());
+    }
+
     pub fn get_resource_group(&self) -> Option<&str> {
         self.resource_group.as_deref()
+    }
+
+    pub fn get_vault_resource_group(&self) -> Option<&str> {
+        self.vault_resource_group.as_deref()
+    }
+
+    pub fn get_vault_name(&self) -> Option<&str> {
+        self.vault_name.as_deref()
     }
 
     pub fn set_subscription_id(&mut self, subscription_id: &str) {

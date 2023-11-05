@@ -19,13 +19,21 @@ mod vm_client;
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
-    /// Sets the Azure subscription ID.
+    /// Sets the default Azure subscription ID.
     #[arg(long)]
     set_sub: Option<String>,
 
-    /// Set the Azure resource group.
+    /// Sets the default Azure resource group.
     #[arg(long)]
     set_rg: Option<String>,
+
+    /// Sets the vaults default Azure resource group.
+    #[arg(long)]
+    set_vault_rg: Option<String>,
+
+    /// Sets the default vault name.
+    #[arg(long)]
+    set_vault: Option<String>,
 
     #[command(subcommand)]
     command: Option<Cmd>
@@ -36,7 +44,28 @@ enum Cmd {
     /// A set of commands for Azure subscriptions.
     Sub(SubArgs),
     Rg(RgArgs),
-    Vm(VmArgs)
+    Vm(VmArgs),
+    Recovery(RecoveryArgs)
+}
+
+#[derive(Args, Debug)]
+struct RecoveryArgs {
+    #[command(subcommand)]
+    command: RecoveryCmd
+}
+
+#[derive(Subcommand, Debug)]
+enum RecoveryCmd {
+    Protect {
+        #[arg(short, long)]
+        vault_name: String,
+
+        #[arg(short, long)]
+        group: Option<String>,
+
+        #[arg(short, long)]
+        sub_id: Option<String>
+    }
 }
 
 #[derive(Args, Debug)]
@@ -132,16 +161,30 @@ enum SubCmd {
 
 async fn handle_globals(cli: &Cli, store: &mut Store) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(sub_id) = cli.set_sub.as_deref() {
-        debug!("Setting subscription to: {sub_id}");
+        debug!("Setting default subscription to: {sub_id}");
         store.set_subscription_id(sub_id);
     }
 
     if let Some(rg) = cli.set_rg.as_deref() {
-        debug!("Setting resource group to: {rg}");
+        debug!("Setting default resource group to: {rg}");
         store.set_resource_group(rg); 
     }
 
-    if cli.set_sub.is_some() || cli.set_rg.is_some() {
+    if let Some(rg) = cli.set_vault_rg.as_deref() {
+        debug!("Setting default vault resource group to: {rg}");
+        store.set_vault_resource_group(rg);
+    }
+
+    if let Some(name) = cli.set_vault.as_deref() {
+        debug!("Setting default vault name to: {name}");
+        store.set_vault_name(name);
+    }
+
+    if cli.set_sub.is_some() ||
+        cli.set_rg.is_some() ||
+        cli.set_vault_rg.is_some() ||
+        cli.set_vault.is_some()
+    {
         debug!("Saving store file");
         store.save().await.expect("Failed to save store file");
     }
@@ -384,6 +427,9 @@ async fn process_cmds(cli: Cli, store: &mut Store, creds: Arc<dyn TokenCredentia
         },
         Some(Cmd::Vm(args)) => {
             process_vm_cmd(args, &store, creds).await?;
+        },
+        Some(Cmd::Recovery(args)) => {
+
         },
         None => {
             println!("No command specified");
