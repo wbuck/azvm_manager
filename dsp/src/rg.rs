@@ -1,4 +1,4 @@
-use tabled::{Table, Tabled, grid::records::into_records::truncate_records::ExactValue};
+use tabled::{Table, Tabled};
 use azure_mgmt_resources::models::{ResourceGroup, ResourceGroupProperties};
 
 use std::borrow::Cow;

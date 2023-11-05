@@ -1,20 +1,20 @@
 use azure_identity::AzureCliCredential;
-use azure_core::{RetryOptions, ExponentialRetryOptions, auth::{TokenResponse, TokenCredential}};
+use azure_core::{RetryOptions, ExponentialRetryOptions, auth::TokenCredential};
 use clap::{Parser, Subcommand, Args};
-use futures::stream::StreamExt;
 use futures_util::TryStreamExt;
 use std::sync::Arc;
 use log::debug;
 use store::Store;
-use azure_mgmt_compute::Client as ComputeClient;
 use azure_mgmt_resources::{Client as ResourceClient, models::ResourceGroup};
 use azure_mgmt_subscription::{Client as SubscriptionClient, models::Subscription};
-use dsp;
+use tokio::time::{sleep_until, Duration, Instant};
+use dsp::{display_rg, display_sub, display_vm, Output};
+use spinoff::{Spinner, spinners, Color};
+
+use crate::vm_client::{VmClient, VmCommand};
 
 mod error;
-use error::AppError;
-
-
+mod vm_client;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -35,7 +35,59 @@ struct Cli {
 enum Cmd { 
     /// A set of commands for Azure subscriptions.
     Sub(SubArgs),
-    Rg(RgArgs)
+    Rg(RgArgs),
+    Vm(VmArgs)
+}
+
+#[derive(Args, Debug)]
+struct VmArgs {
+    #[command(subcommand)]
+    command: VmCmd
+}
+
+#[derive(Subcommand, Debug)]
+enum VmCmd {
+    Get {
+        #[arg(short, long)]
+        name: String,
+
+        #[arg(short, long)]
+        group: Option<String>,
+
+        #[arg(short, long)]
+        sub_id: Option<String>
+    },
+    List {
+        #[arg(short, long)]
+        group: Option<String>,
+
+        #[arg(short, long)]
+        sub_id: Option<String>
+    },
+    ListAll {
+        #[arg(short, long)]
+        sub_id: Option<String>
+    },
+    Start {
+        #[arg(short, long, num_args = 1.., value_delimiter = ',')]
+        names: Option<Vec<String>>,
+
+        #[arg(short, long)]
+        group: Option<String>,
+
+        #[arg(short, long)]
+        sub_id: Option<String>
+    },
+    Stop {
+        #[arg(short, long, num_args = 1, value_delimiter = ',')]
+        names: Option<Vec<String>>,
+
+        #[arg(short, long)]
+        group: Option<String>,
+
+        #[arg(short, long)]
+        sub_id: Option<String>
+    }
 }
 
 #[derive(Args, Debug)]
@@ -78,45 +130,6 @@ enum SubCmd {
     List
 }
 
-
-#[derive(Subcommand, Debug)]
-enum Commands2 {
-    /// Displays information about the currently selected subscription.
-    GetSub {
-        #[arg(short, long)]
-        verbose: bool,
-
-        /// Displays information about the specified subscription, 
-        /// else displays information about the currently selected subscription.
-        #[arg(short, long)]
-        id: Option<String>
-    },
-    /// Displays information about all subscriptions.
-    GetSubs {
-        #[arg(short, long)]
-        verbose: bool
-    },
-    /// Displays information about all resource groups for the currently selected subscription.
-    GetRgs,
-    /// Displays information about a specific resource group.
-    GetRg {
-        /// Displays information about the specified resource group, 
-        /// else displays information about the currently selected resource group.
-        #[arg(short, long)]
-        name: Option<String>
-    },
-    GetVms {
-        #[arg(short, long)]
-        sub: Option<String>,
-
-        #[arg(short, long)]
-        rg: Option<String>,
-
-        #[arg(short, long)]
-        verbose: bool
-    }
-}
-
 async fn handle_globals(cli: &Cli, store: &mut Store) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(sub_id) = cli.set_sub.as_deref() {
         debug!("Setting subscription to: {sub_id}");
@@ -126,7 +139,7 @@ async fn handle_globals(cli: &Cli, store: &mut Store) -> Result<(), Box<dyn std:
     if let Some(rg) = cli.set_rg.as_deref() {
         debug!("Setting resource group to: {rg}");
         store.set_resource_group(rg); 
-    }    
+    }
 
     if cli.set_sub.is_some() || cli.set_rg.is_some() {
         debug!("Saving store file");
@@ -135,7 +148,7 @@ async fn handle_globals(cli: &Cli, store: &mut Store) -> Result<(), Box<dyn std:
     Ok(())
 }
 
-async fn process_sub_cmd(args: &SubArgs, store: &Store, creds: Arc<dyn TokenCredential>) -> Result<(), Box<dyn std::error::Error>> {
+async fn process_sub_cmd(args: SubArgs, store: &Store, creds: Arc<dyn TokenCredential>) -> Result<(), Box<dyn std::error::Error>> {
 
     let client = SubscriptionClient::builder(creds)
         .retry(RetryOptions::exponential(ExponentialRetryOptions::default()))
@@ -152,7 +165,7 @@ async fn process_sub_cmd(args: &SubArgs, store: &Store, creds: Arc<dyn TokenCred
                 .get(sub_id)
                 .await?;
 
-            dsp::display_sub(dsp::Output::Single(&sub));
+            display_sub(Output::Single(&sub));
         },
         SubCmd::List => {
             let subs: Vec<Subscription> = client.subscriptions_client()
@@ -164,13 +177,13 @@ async fn process_sub_cmd(args: &SubArgs, store: &Store, creds: Arc<dyn TokenCred
                 .flat_map(|subs| subs.value)
                 .collect();
 
-            dsp::display_sub(dsp::Output::Multiple(&subs));
+            display_sub(Output::Multiple(&subs));
         }
     }
     Ok(())
 }
 
-async fn process_rg_cmd(args: &RgArgs, store: &Store, creds: Arc<dyn TokenCredential>) -> Result<(), Box<dyn std::error::Error>> {
+async fn process_rg_cmd(args: RgArgs, store: &Store, creds: Arc<dyn TokenCredential>) -> Result<(), Box<dyn std::error::Error>> {
     let client = ResourceClient::builder(creds)
         .retry(RetryOptions::exponential(ExponentialRetryOptions::default()))
         .build();
@@ -192,7 +205,7 @@ async fn process_rg_cmd(args: &RgArgs, store: &Store, creds: Arc<dyn TokenCreden
                 .get(group_name, sub_id)
                 .await?;
 
-            dsp::display_rg(dsp::Output::Single(&group));
+            display_rg(Output::Single(&group));
         },
         RgCmd::List { sub_id } => {
             let sub_id = match sub_id.as_deref() {
@@ -209,20 +222,168 @@ async fn process_rg_cmd(args: &RgArgs, store: &Store, creds: Arc<dyn TokenCreden
                 .flat_map(|groups| groups.value)
                 .collect();
 
-            dsp::display_rg(dsp::Output::Multiple(&groups));
+            display_rg(Output::Multiple(&groups));
         }
     }
 
     Ok(())
 }
 
-async fn process_cmds(cli: &Cli, store: &mut Store, creds: Arc<dyn TokenCredential>) -> Result<(), Box<dyn std::error::Error>> {
-    match &cli.command {
+async fn send_vm_command(client: &VmClient, vm_names: Option<Vec<String>>, group_name: &str, subscription_id: &str, command: VmCommand) -> Result<(), Box<dyn std::error::Error>> {
+    let mut vm_names = match vm_names {
+        Some(vm_names) => vm_names,
+        None => client.list_vm_names(group_name, subscription_id).await?
+    };
+
+    client.command(vm_names.iter(), group_name, subscription_id, command).await?;
+
+    let total = vm_names.len();
+    let mut completed = 0;
+
+    let (prefix, target_state) = match command {
+        VmCommand::Start => ("Started", "VM running"),
+        VmCommand::Stop => ("Stopped", "VM deallocated")
+    };
+
+    let mut spinner = Spinner::new(
+        spinners::Dots,
+        format!("{prefix} 0/{total} virtual machines..."),
+        Color::Blue
+    );
+
+    loop {
+
+        let done = client
+            .is_complete(vm_names.iter(), group_name, subscription_id, target_state)
+            .await?;
+
+        completed += done.len();
+
+        spinner.update(
+            spinners::Dots,
+            format!("{prefix} {completed}/{total} virtual machines..."),
+            Color::Blue
+        );
+
+        let temp: Vec<String> = done.iter().map(|s| (*s).clone()).collect();
+        for name in temp.iter() {
+            if let Some(pos) = vm_names.iter().position(|n| n == name) {
+                vm_names.remove(pos);
+            }
+        }
+
+        if vm_names.is_empty() {
+            break;
+        }
+        sleep_until(Instant::now() + Duration::from_secs(2)).await;
+    }
+    spinner.stop();
+
+    let vms = client.list_vms_with_instance_view(
+        group_name,
+        subscription_id
+    ).await?;
+
+    display_vm(Output::Multiple(&vms));
+
+    Ok(())
+}
+
+async fn process_vm_cmd(args: VmArgs, store: &Store, creds: Arc<dyn TokenCredential>) -> Result<(), Box<dyn std::error::Error>> {
+    let client = VmClient::new(creds);
+
+    fn get_opt<'a, F>(opt: &'a Option<String>, f: F) -> Result<&'a str, error::AppError>
+    where
+        F: FnOnce() -> Result<&'a str, error::AppError>
+    {
+        match opt.as_deref() {
+            Some(id) => Ok(id),
+            None => f()
+        }
+    }
+
+    match args.command {
+        VmCmd::Get { name, group, sub_id } => {
+            let subscription_id = get_opt(&sub_id, || store.get_subscription_id()
+                .ok_or(error::AppError::NoSub))?;
+
+            let group_name = get_opt(&group, || store.get_resource_group()
+                .ok_or(error::AppError::NoRg))?;
+
+            let vm = client.get_vm_with_instance_view(
+                name.as_str(),
+                group_name,
+                subscription_id
+            ).await?;
+
+            display_vm(Output::Single(&vm));
+        },
+        VmCmd::List { group, sub_id } => {
+            let subscription_id = get_opt(&sub_id, || store.get_subscription_id()
+                .ok_or(error::AppError::NoSub))?;
+
+            let group_name = get_opt(&group, || store.get_resource_group()
+                .ok_or(error::AppError::NoRg))?;
+
+            let vms = client.list_vms_with_instance_view(
+                group_name,
+                subscription_id
+            ).await?;
+
+            display_vm(Output::Multiple(&vms));
+        },
+        VmCmd::ListAll { sub_id } => {
+            let subscription_id = get_opt(&sub_id, || store.get_subscription_id()
+                .ok_or(error::AppError::NoSub))?;
+
+            let vms = client.list_all_vms(subscription_id).await?;
+            display_vm(Output::Multiple(&vms));
+        },
+        VmCmd::Start { names, group, sub_id } => {
+
+            let subscription_id = get_opt(&sub_id, || store.get_subscription_id()
+                .ok_or(error::AppError::NoSub))?;
+
+            let group_name = get_opt(&group, || store.get_resource_group()
+                .ok_or(error::AppError::NoRg))?;
+
+            send_vm_command(
+                &client,
+                names,
+                group_name,
+                subscription_id,
+                VmCommand::Start
+            ).await?;
+        },
+        VmCmd::Stop { names, group, sub_id } => {
+            let subscription_id = get_opt(&sub_id, || store.get_subscription_id()
+                .ok_or(error::AppError::NoSub))?;
+
+            let group_name = get_opt(&group, || store.get_resource_group()
+                .ok_or(error::AppError::NoRg))?;
+
+            send_vm_command(
+                &client,
+                names,
+                group_name,
+                subscription_id,
+                VmCommand::Stop
+            ).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn process_cmds(cli: Cli, store: &mut Store, creds: Arc<dyn TokenCredential>) -> Result<(), Box<dyn std::error::Error>> {
+    match cli.command {
         Some(Cmd::Sub(args)) => {
             process_sub_cmd(args, &store, creds).await?;
         },
         Some(Cmd::Rg(args)) => {
             process_rg_cmd(args, &store, creds).await?;
+        },
+        Some(Cmd::Vm(args)) => {
+            process_vm_cmd(args, &store, creds).await?;
         },
         None => {
             println!("No command specified");
@@ -231,8 +392,19 @@ async fn process_cmds(cli: &Cli, store: &mut Store, creds: Arc<dyn TokenCredenti
     Ok(())
 }
 
+#[cfg(windows)]
+fn config() {
+    colored::control::set_virtual_terminal(true).unwrap();
+}
+
+#[cfg(not(windows))]
+fn config() {}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+
+    config();
+
     let cli = Cli::parse();
 
     let mut store = Store::get_or_create().await?;
@@ -241,49 +413,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if cli.command.is_some() {
         debug!("Creating Azure credentials");
         let creds = Arc::new(AzureCliCredential::new());
-        process_cmds(&cli, &mut store, creds).await?;  
+        process_cmds(cli, &mut store, creds).await?;
     }
-    
-    
-
-     
-
-    // let sub_client = SubscriptionClient::builder(creds)
-    //     .retry(RetryOptions::exponential(ExponentialRetryOptions::default()))
-    //     .build();
-
-    // let mut subs = sub_client
-    //     .subscriptions_client()
-    //     .list()
-    //     .into_stream();
-
-    // while let Some(subs) = subs.next().await {
-    //     let subs = subs?;
-    //     for sub in subs.value {
-    //         println!("{:#?}", &sub);
-    //     }
-    // }
-    
-
-    
-
-    //let mut groups = resource_client
-    //    .resource_groups_client()
-    //    .list(store.get_subscription_id().unwrap())
-    //    .into_stream();
-//
-    //while let Some(groups) = groups.next().await {
-    //    let groups = groups?;
-    //    for group in groups.value {
-    //        println!("{:#?}", &group);
-    //    }
-    //}
-
-    //let compute_client = ComputeClient::builder(creds)
-    //    .retry(RetryOptions::exponential(ExponentialRetryOptions::default()))
-    //    .build();
-
-   
 
     Ok(())
 }
