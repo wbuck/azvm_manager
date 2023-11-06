@@ -186,7 +186,16 @@ async fn handle_globals(cli: &Cli, store: &mut Store) -> Result<(), Box<dyn std:
         cli.set_vault.is_some()
     {
         debug!("Saving store file");
+
+        let mut spinner = Spinner::new(
+            spinners::Dots,
+            format!("Saving configuration..."),
+            Color::Blue
+        );
+
         store.save().await.expect("Failed to save store file");
+
+        spinner.clear();
     }
     Ok(())
 }
@@ -204,13 +213,27 @@ async fn process_sub_cmd(args: SubArgs, store: &Store, creds: Arc<dyn TokenCrede
                 None => store.get_subscription_id().ok_or(error::AppError::NoSub)?,
             };
 
+            let mut spinner = Spinner::new(
+                spinners::Dots,
+                format!("Loading subscription..."),
+                Color::Blue
+            );
+
             let sub = client.subscriptions_client()
                 .get(sub_id)
                 .await?;
 
+            spinner.clear();
             display_sub(Output::Single(&sub));
         },
         SubCmd::List => {
+
+            let mut spinner = Spinner::new(
+                spinners::Dots,
+                format!("Loading subscriptions..."),
+                Color::Blue
+            );
+
             let subs: Vec<Subscription> = client.subscriptions_client()
                 .list()
                 .into_stream()
@@ -220,6 +243,7 @@ async fn process_sub_cmd(args: SubArgs, store: &Store, creds: Arc<dyn TokenCrede
                 .flat_map(|subs| subs.value)
                 .collect();
 
+            spinner.clear();
             display_sub(Output::Multiple(&subs));
         }
     }
@@ -242,12 +266,19 @@ async fn process_rg_cmd(args: RgArgs, store: &Store, creds: Arc<dyn TokenCredent
             let group_name = match group.as_deref() {
                 Some(name) => name,
                 None => store.get_resource_group().ok_or(error::AppError::NoRg)?,
-            };            
+            };
+
+            let mut spinner = Spinner::new(
+                spinners::Dots,
+                format!("Loading resource group..."),
+                Color::Blue
+            );
 
             let group = client.resource_groups_client()
                 .get(group_name, sub_id)
                 .await?;
 
+            spinner.clear();
             display_rg(Output::Single(&group));
         },
         RgCmd::List { sub_id } => {
@@ -255,6 +286,12 @@ async fn process_rg_cmd(args: RgArgs, store: &Store, creds: Arc<dyn TokenCredent
                 Some(id) => id,
                 None => store.get_subscription_id().ok_or(error::AppError::NoSub)?
             };
+
+            let mut spinner = Spinner::new(
+                spinners::Dots,
+                format!("Loading resource groups..."),
+                Color::Blue
+            );
 
             let groups: Vec<ResourceGroup> = client.resource_groups_client()
                 .list(sub_id)
@@ -265,6 +302,7 @@ async fn process_rg_cmd(args: RgArgs, store: &Store, creds: Arc<dyn TokenCredent
                 .flat_map(|groups| groups.value)
                 .collect();
 
+            spinner.clear();
             display_rg(Output::Multiple(&groups));
         }
     }
@@ -302,11 +340,7 @@ async fn send_vm_command(client: &VmClient, vm_names: Option<Vec<String>>, group
 
         completed += done.len();
 
-        spinner.update(
-            spinners::Dots,
-            format!("{prefix} {completed}/{total} virtual machines..."),
-            Color::Blue
-        );
+        spinner.update_text(format!("{prefix} {completed}/{total} virtual machines..."));
 
         let temp: Vec<String> = done.iter().map(|s| (*s).clone()).collect();
         for name in temp.iter() {
@@ -320,7 +354,7 @@ async fn send_vm_command(client: &VmClient, vm_names: Option<Vec<String>>, group
         }
         sleep_until(Instant::now() + Duration::from_secs(2)).await;
     }
-    spinner.stop();
+    spinner.clear();
 
     let vms = client.list_vms_with_instance_view(
         group_name,
@@ -353,11 +387,19 @@ async fn process_vm_cmd(args: VmArgs, store: &Store, creds: Arc<dyn TokenCredent
             let group_name = get_opt(&group, || store.get_resource_group()
                 .ok_or(error::AppError::NoRg))?;
 
+            let mut spinner = Spinner::new(
+                spinners::Dots,
+                format!("Loading virtual machine..."),
+                Color::Blue
+            );
+
             let vm = client.get_vm_with_instance_view(
                 name.as_str(),
                 group_name,
                 subscription_id
             ).await?;
+
+            spinner.clear();
 
             display_vm(Output::Single(&vm));
         },
@@ -368,18 +410,33 @@ async fn process_vm_cmd(args: VmArgs, store: &Store, creds: Arc<dyn TokenCredent
             let group_name = get_opt(&group, || store.get_resource_group()
                 .ok_or(error::AppError::NoRg))?;
 
+            let mut spinner = Spinner::new(
+                spinners::Dots,
+                format!("Loading virtual machines..."),
+                Color::Blue
+            );
+
             let vms = client.list_vms_with_instance_view(
                 group_name,
                 subscription_id
             ).await?;
 
+            spinner.clear();
             display_vm(Output::Multiple(&vms));
         },
         VmCmd::ListAll { sub_id } => {
             let subscription_id = get_opt(&sub_id, || store.get_subscription_id()
                 .ok_or(error::AppError::NoSub))?;
 
+            let mut spinner = Spinner::new(
+                spinners::Dots,
+                format!("Loading virtual machines..."),
+                Color::Blue
+            );
+
             let vms = client.list_all_vms(subscription_id).await?;
+
+            spinner.clear();
             display_vm(Output::Multiple(&vms));
         },
         VmCmd::Start { names, group, sub_id } => {
@@ -414,6 +471,14 @@ async fn process_vm_cmd(args: VmArgs, store: &Store, creds: Arc<dyn TokenCredent
             ).await?;
         }
     }
+    Ok(())
+}
+
+async fn process_recovery_cmd(args: RecoveryArgs, store: &Store, creds: Arc<dyn TokenCredential>) -> Result<(), Box<dyn std::error::Error>> {
+    // let client = RecoveryClient::builder(creds)
+    //     .retry(RetryOptions::exponential(ExponentialRetryOptions::default()))
+    //     .build();
+
     Ok(())
 }
 
