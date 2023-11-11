@@ -1,15 +1,20 @@
 use azure_identity::AzureCliCredential;
-use azure_core::{RetryOptions, ExponentialRetryOptions, auth::TokenCredential};
+use azure_core::{RetryOptions, ExponentialRetryOptions, auth::TokenCredential, StatusCode};
 use clap::{Parser, Subcommand, Args};
-use futures_util::TryStreamExt;
+use futures_util::{StreamExt, TryStreamExt};
 use std::sync::Arc;
+use std::task::Waker;
+use azure_core::headers::HeaderName;
 use log::debug;
 use store::Store;
 use azure_mgmt_resources::{Client as ResourceClient, models::ResourceGroup};
 use azure_mgmt_subscription::{Client as SubscriptionClient, models::Subscription};
+use azure_mgmt_recoveryservicesbackup::{Client as BackupClient};
+use azure_mgmt_recoveryservicesbackup::models::{WorkloadProtectableItem, WorkloadProtectableItemResource};
 use tokio::time::{sleep_until, Duration, Instant};
 use dsp::{display_rg, display_sub, display_vm, Output};
 use spinoff::{Spinner, spinners, Color};
+use url::Url;
 
 use crate::vm_client::{VmClient, VmCommand};
 
@@ -56,15 +61,21 @@ struct RecoveryArgs {
 
 #[derive(Subcommand, Debug)]
 enum RecoveryCmd {
-    Protect {
-        #[arg(short, long)]
-        vault_name: String,
+    Backup {
+        #[arg(long)]
+        vault_name: Option<String>,
+
+        #[arg(long)]
+        vault_group: Option<String>,
 
         #[arg(short, long)]
         group: Option<String>,
 
         #[arg(short, long)]
-        sub_id: Option<String>
+        sub_id: Option<String>,
+
+        #[arg(short, long, num_args = 1.., value_delimiter = ',')]
+        names: Option<Vec<String>>,
     }
 }
 
@@ -366,18 +377,18 @@ async fn send_vm_command(client: &VmClient, vm_names: Option<Vec<String>>, group
     Ok(())
 }
 
-async fn process_vm_cmd(args: VmArgs, store: &Store, creds: Arc<dyn TokenCredential>) -> Result<(), Box<dyn std::error::Error>> {
-    let client = VmClient::new(creds);
-
-    fn get_opt<'a, F>(opt: &'a Option<String>, f: F) -> Result<&'a str, error::AppError>
+fn get_opt<'a, F>(opt: &'a Option<String>, f: F) -> Result<&'a str, error::AppError>
     where
         F: FnOnce() -> Result<&'a str, error::AppError>
-    {
-        match opt.as_deref() {
-            Some(id) => Ok(id),
-            None => f()
-        }
+{
+    match opt.as_deref() {
+        Some(id) => Ok(id),
+        None => f()
     }
+}
+
+async fn process_vm_cmd(args: VmArgs, store: &Store, creds: Arc<dyn TokenCredential>) -> Result<(), Box<dyn std::error::Error>> {
+    let client = VmClient::new(creds);
 
     match args.command {
         VmCmd::Get { name, group, sub_id } => {
@@ -475,9 +486,89 @@ async fn process_vm_cmd(args: VmArgs, store: &Store, creds: Arc<dyn TokenCredent
 }
 
 async fn process_recovery_cmd(args: RecoveryArgs, store: &Store, creds: Arc<dyn TokenCredential>) -> Result<(), Box<dyn std::error::Error>> {
-    // let client = RecoveryClient::builder(creds)
-    //     .retry(RetryOptions::exponential(ExponentialRetryOptions::default()))
-    //     .build();
+    let client = BackupClient::builder(creds.clone())
+        .retry(RetryOptions::exponential(ExponentialRetryOptions::default()))
+        .build();
+
+    match args.command {
+        RecoveryCmd::Backup { vault_name, vault_group, group, sub_id, names } => {
+            let subscription_id = get_opt(&sub_id, || store.get_subscription_id()
+                .ok_or(error::AppError::NoSub))?;
+
+            let group_name = get_opt(&group, || store.get_resource_group()
+                .ok_or(error::AppError::NoRg))?;
+
+            let vault_name = get_opt(&vault_name, || store.get_vault_name()
+                .ok_or(error::AppError::NoVault))?;
+
+            let vault_group = get_opt(&vault_group, || store.get_vault_resource_group().or_else(|| Some(group_name))
+                .ok_or(error::AppError::NoRg))?;
+
+            // let mut vm_names = match names {
+            //     Some(vm_names) => vm_names,
+            //     None => {
+            //         let client = VmClient::new(creds);
+            //         client.list_vm_names(group_name, subscription_id).await?
+            //     }
+            // };
+
+            let mut spinner = Spinner::new(
+                spinners::Dots,
+                format!("Refreshing recovery services vault..."),
+                Color::Blue
+            );
+
+            let response = client.protection_containers_client().refresh(
+                vault_name,
+                vault_group,
+                subscription_id,
+                "Azure"
+            ).send().await?;
+
+            let location = response
+                .as_ref()
+                .headers()
+                .get_optional_str(&HeaderName::from_static("location"))
+                .ok_or(error::AppError::MissingLocationHeader)?;
+
+            let location = Url::parse(location)?;
+            let operation_id = location
+                .path_segments()
+                .expect("Invalid location header")
+                .last()
+                .unwrap();
+
+            spinner.update_text("Waiting for completion of refresh...");
+
+            loop {
+                let response = client.protection_container_refresh_operation_results_client().get(
+                    vault_name,
+                    vault_group,
+                    subscription_id,
+                    "Azure",
+                    operation_id
+                ).send().await?;
+
+                if response.as_ref().status().eq(&StatusCode::NoContent) {
+                    break;
+                }
+            }
+
+            spinner.stop_with_message("Refresh complete");
+
+            let mut page = client.backup_protectable_items_client()
+                .list(vault_name, vault_group, subscription_id)
+                .filter("backupManagementType eq 'AzureIaasVM'")
+                .into_stream();
+
+            while let Some(vms) = page.next().await {
+                let vms = vms?;
+                for vm in vms.value.iter() {
+                    println!("{vm:#?}");
+                }
+            }
+        }
+    }
 
     Ok(())
 }
@@ -494,7 +585,7 @@ async fn process_cmds(cli: Cli, store: &mut Store, creds: Arc<dyn TokenCredentia
             process_vm_cmd(args, &store, creds).await?;
         },
         Some(Cmd::Recovery(args)) => {
-
+            process_recovery_cmd(args, &store, creds).await?;
         },
         None => {
             println!("No command specified");
@@ -513,7 +604,6 @@ fn config() {}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-
     config();
 
     let cli = Cli::parse();

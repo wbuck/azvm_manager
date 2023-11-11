@@ -4,6 +4,8 @@ use std::fmt::{self, Formatter, Display};
 pub enum AppError {
     NoSub,
     NoRg,
+    NoVault,
+    MissingLocationHeader
 }
 
 impl std::error::Error for AppError {}
@@ -13,6 +15,8 @@ impl Display for AppError {
         match self {
             AppError::NoSub => write!(f, "No subscription specified"),
             AppError::NoRg => write!(f, "No resource group specified"),
+            AppError::NoVault => write!(f, "No vault name specified"),
+            AppError::MissingLocationHeader => write!(f, "The response is missing a location header")
         }
     }
 }
