@@ -1,7 +1,7 @@
-use azure_identity::AzureCliCredential;
+use azure_identity::{AzureCliCredential, DefaultAzureCredential};
 use azure_core::{RetryOptions, ExponentialRetryOptions, auth::TokenCredential, StatusCode};
 use clap::{Parser, Subcommand, Args};
-use futures_util::{StreamExt, TryStreamExt};
+use futures_util::{StreamExt, TryFutureExt, TryStreamExt};
 use std::sync::Arc;
 use azure_core::headers::HeaderName;
 use log::debug;
@@ -11,19 +11,20 @@ use azure_mgmt_subscription::{Client as SubscriptionClient, models::Subscription
 use azure_mgmt_recoveryservicesbackup::{Client as BackupClient};
 use azure_mgmt_recoveryservicesbackup::models::{
     AzureIaaSvmProtectedItem,
-    OperationStatus,
     operation_status::Status as OpStatus,
     ProtectedItem,
     ProtectedItemResource,
     ProtectedItemUnion,
     Resource as RequestResource
 };
-use azure_mgmt_recoveryservicesbackup::models::operation_status::Status;
 use azure_mgmt_recoveryservicesbackup::models::protected_item::{BackupManagementType, WorkloadType};
+use reqwest::header::{HeaderMap, HeaderValue};
+use serde_json::json;
 use tokio::time::{sleep_until, Duration, Instant};
 use dsp::{display_rg, display_sub, display_vm, Output};
 use spinoff::{Spinner, spinners, Color};
 use url::Url;
+use serde::{Deserialize, Serialize};
 
 use crate::vm_client::{VmClient, VmCommand};
 
@@ -128,7 +129,7 @@ enum VmCmd {
         sub_id: Option<String>
     },
     Stop {
-        #[arg(short, long, num_args = 1, value_delimiter = ',')]
+        #[arg(short, long, num_args = 1.., value_delimiter = ',')]
         names: Option<Vec<String>>,
 
         #[arg(short, long)]
@@ -528,22 +529,33 @@ async fn process_recovery_cmd(args: RecoveryArgs, store: &Store, creds: Arc<dyn 
                 "Azure"
             ).send().await?;
 
-            let location = response
+            let headers = response
                 .as_ref()
-                .headers()
-                .get_optional_str(&HeaderName::from_static("location"))
-                .ok_or(error::AppError::MissingLocationHeader)?;
+                .headers();
 
-            let location = Url::parse(location)?;
+            let location = headers
+                .get_optional_str(&HeaderName::from_static("azure-asyncoperation"))
+                .or_else(|| headers.get_optional_str(&HeaderName::from_static("location")))
+                .ok_or_else(|| error::AppError::MissingLocationHeader)
+                .and_then(|header| Url::parse(header).map_err(|e| error::AppError::UrlParseError(e)))?;
+
             let operation_id = location
                 .path_segments()
                 .expect("Invalid location header")
                 .last()
                 .unwrap();
 
+            let retry_secs = headers
+                .get_optional_str(&HeaderName::from_static("retry-after"))
+                .unwrap_or("60")
+                .parse()
+                .map_or_else(|_| Duration::from_secs(60), |value| Duration::from_secs(value));
+
             spinner.update_text("Waiting for completion of refresh...");
 
             loop {
+                sleep_until(Instant::now() + retry_secs).await;
+
                 let response = client.protection_container_refresh_operation_results_client().get(
                     vault_name,
                     vault_group,
@@ -559,7 +571,7 @@ async fn process_recovery_cmd(args: RecoveryArgs, store: &Store, creds: Arc<dyn 
 
             spinner.update_text("Getting list of virtual machines..");
 
-            let vm_client = VmClient::new(creds);
+            let vm_client = VmClient::new(creds.clone());
 
             let vm_names = names.unwrap_or_else(|| Vec::new());
             let vms = vm_client.list_vms(group_name, subscription_id).await?;
@@ -582,96 +594,83 @@ async fn process_recovery_cmd(args: RecoveryArgs, store: &Store, creds: Arc<dyn 
                 })
                 .collect::<Vec<_>>();
 
-            let mut items = Vec::new();
+            // let mut items = Vec::new();
             let total = values.len();
             let mut count = 0;
 
             spinner.update_text(format!("Protected {count}/{total} virtual machines"));
 
+
+            // let credential = DefaultAzureCredential::default();
+            // let token_response = credential.get_token("")
+            let cloned = creds.clone();
+            let token = cloned
+                .get_token("https://management.azure.com")
+                .await?;
+
+            let mut headers = HeaderMap::new();
+            let header_value = format!("Bearer {}", token.token.secret());
+            headers.append("Authorization", HeaderValue::from_str(header_value.as_str())?);
+            headers.append("Accept", "application/json".parse().unwrap());
+            headers.append("Content-Type", "application/json".parse().unwrap());
+
+            let mut http_client = reqwest::ClientBuilder::new()
+                .default_headers(headers)
+                .build()?;
+
             for (container_name, protected_item_name, id, resource) in values {
-                let resource = RequestResource {
-                    id: resource.id,
-                    name: resource.name,
-                    location: Some(resource.location),
-                    tags: resource.tags,
-                    e_tag: None,
-                    type_: resource.type_
-                };
+                let policy_id = format!("/subscriptions/{subscription_id}/resourceGroups/{vault_group}/providers/microsoft.recoveryservices/vaults/{vault_name}/backupPolicies/DefaultPolicy");
+                let source_resource_id = format!("/subscriptions/{subscription_id}/resourceGroups/{group_name}/providers/Microsoft.Compute/virtualMachines/{}", resource.name.as_deref().unwrap());
 
-                let item = ProtectedItem {
-                    backup_management_type: Some(BackupManagementType::AzureIaasVm),
-                    workload_type: Some(WorkloadType::Vm),
-                    container_name: Some(container_name.clone()),
-                    source_resource_id: Some(id.clone()),
-                    policy_id: Some(format!("subscriptions/{subscription_id}/resourceGroups/{vault_name}/providers/microsoft.recoveryservices/vaults/{vault_name}/backupPolicies/DefaultPolicy")),
-                    last_recovery_point: None,
-                    backup_set_name: None,
-                    create_mode: None,
-                    deferred_delete_time_in_utc: None,
-                    is_scheduled_for_deferred_delete: None,
-                    deferred_delete_time_remaining: None,
-                    is_deferred_delete_schedule_upcoming: None,
-                    is_rehydrate: None,
-                    resource_guard_operation_requests: vec![],
-                    is_archive_enabled: None,
-                    policy_name: Some(String::from("DefaultPolicy")),
-                    soft_delete_retention_period_in_days: None,
-                };
+                let test_body = json!({
+                    "id": id.as_str(),
+                    "name": resource.name.as_deref().unwrap(),
+                    "type": "Microsoft.Compute/virtualMachines",
+                    "location": "eastus",
+                    "properties": {
+                        "protectedItemType": "Microsoft.Compute/virtualMachines",
+                        "backupManagementType": "AzureIaasVM",
+                        "workloadType": "VM",
+                        "containerName": container_name.as_str(),
+                        "sourceResourceId": source_resource_id.as_str(),
+                        "policyId": policy_id
+                    }
+                });
 
-                let properties = AzureIaaSvmProtectedItem {
-                    protected_item: item,
-                    friendly_name: None,
-                    virtual_machine_id: None,
-                    protection_status: None,
-                    protection_state: None,
-                    health_status: None,
-                    health_details: vec![],
-                    kpis_healths: None,
-                    last_backup_status: None,
-                    last_backup_time: None,
-                    protected_item_data_id: None,
-                    extended_info: None,
-                    extended_properties: None,
-                };
+                let mut url = Url::parse(&format!(
+                    "https://management.azure.com/Subscriptions/{subscription_id}/resourceGroups/{vault_group}/providers/Microsoft.RecoveryServices/vaults/{vault_name}/backupFabrics/azure/protectionContainers/{container_name}/protectedItems/{protected_item_name}"
+                )).unwrap();
 
-                let body = ProtectedItemResource {
-                    resource,
-                    properties: Some(ProtectedItemUnion::AzureIaaSvmProtectedItem(properties))
-                };
-                let response = client.protected_items_client().create_or_update(
-                    vault_name,
-                    vault_group,
-                    subscription_id, "Azure",
-                    container_name.as_str(),
-                    protected_item_name.as_str(),
-                    body
-                ).send().await?;
+                url.query_pairs_mut().append_pair("api-version", "2019-05-13");
 
+                let response = http_client
+                    .put(url)
+                    .body(test_body.to_string())
+                    .send()
+                    .await?;
 
-                let location = response
-                    .as_ref()
-                    .headers()
-                    .get_optional_str(&HeaderName::from_static("location"))
-                    .ok_or(error::AppError::MissingLocationHeader)?;
+                let headers = response.headers();
 
-                let location = Url::parse(location)?;
+                let location = headers
+                    .get("azure-asyncoperation")
+                    .or_else(|| headers.get("location"))
+                    .ok_or_else(||error::AppError::MissingLocationHeader)
+                    .and_then(|header| Url::parse(header.to_str().unwrap()).map_err(|e| error::AppError::UrlParseError(e)))?;
+
                 let operation_id = location
                     .path_segments()
                     .expect("Invalid location header")
                     .last()
                     .unwrap();
 
-                let retry_secs: u64 = response
-                    .as_ref()
-                    .headers()
-                    .get_optional_str(&HeaderName::from_static("retry-after"))
-                    .unwrap()
-                    .parse()?;
-
-                sleep_until(Instant::now() + Duration::from_secs(retry_secs)).await;
+                let retry_secs = headers
+                    .get("retry-after")
+                    .map_or_else(|| Duration::from_secs(60), |value| Duration::from_secs(value.to_str().unwrap().parse().unwrap()));
 
 
                 loop {
+                    sleep_until(Instant::now() + retry_secs).await;
+
                     let status = client.protected_item_operation_statuses_client().get(
                         vault_name,
                         vault_group,
@@ -684,19 +683,17 @@ async fn process_recovery_cmd(args: RecoveryArgs, store: &Store, creds: Arc<dyn 
 
                     match status.status {
                         Some(OpStatus::Succeeded) => {
-                            println!("Succeeded");
-
-                            let item = client.protected_item_operation_results_client().get(
-                                vault_name,
-                                vault_group,
-                                subscription_id,
-                                "Azure",
-                                container_name.as_str(),
-                                protected_item_name.as_str(),
-                                operation_id
-                            ).await?;
-
-                            items.push(item);
+                            // let item = client.protected_item_operation_results_client().get(
+                            //     vault_name,
+                            //     vault_group,
+                            //     subscription_id,
+                            //     "Azure",
+                            //     container_name.as_str(),
+                            //     protected_item_name.as_str(),
+                            //     operation_id
+                            // ).await?;
+                            //
+                            // items.push(item);
 
                             count += 1;
                             spinner.update_text(format!("Protected {count}/{total} virtual machines"));
@@ -708,7 +705,6 @@ async fn process_recovery_cmd(args: RecoveryArgs, store: &Store, creds: Arc<dyn 
                             break;
                         },
                         Some(OpStatus::InProgress) => {
-                            println!("In progress");
                             continue;
                         },
                         Some(OpStatus::Invalid) => {
@@ -729,8 +725,13 @@ async fn process_recovery_cmd(args: RecoveryArgs, store: &Store, creds: Arc<dyn 
 
             }
 
-            spinner.stop_with_message("All virtual machines protected");
-            println!("{items:#?}");
+            spinner.stop();
+
+            // let total = items.len();
+            // count = 0;
+            //
+            // spinner.update_text(format!("Backed up {count}/{total} virtual machines..."));
+            // println!("{items:#?}");
 
 
             // let mut page = client.backup_protectable_items_client()

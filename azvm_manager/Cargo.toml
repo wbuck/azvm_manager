@@ -26,3 +26,6 @@ azure_mgmt_recoveryservices = "0.17.0"
 azure_mgmt_recoveryservicesbackup = "0.17.0"
 azure_mgmt_recoveryservicessiterecovery = "0.17.0"
 url = "2.4.1"
+reqwest = { version = "0.11", features = ["json"] }
+serde_json = "1.0.108"
+serde = { version = "1.0.189", features = ["derive"] }
